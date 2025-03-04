@@ -1,5 +1,6 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using UnDotNet.HtmlToText;
@@ -20,7 +21,7 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
         if (!cache.TryGetValue(AtomCacheKey, out string? atomXml))
         {
             HttpClient client = httpClientFactory.CreateClient();
-            atomXml = await client.GetStringAsync("http://localhost:1145/atom_full.xml");
+            atomXml = await client.GetStringAsync("https://aneot-vintage.arktca.com/atom_full.xml");
 
             MemoryCacheEntryOptions cacheEntryOptions = new MemoryCacheEntryOptions()
                 .SetSlidingExpiration(TimeSpan.FromHours(1));
@@ -130,7 +131,7 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
 
         result.Items = items;
 
-        return TypedResults.Stream(async stream =>
+        return TypedResults.Stream(stream =>
         {
             Atom10FeedFormatter feedFormatter = new(result);
             XmlWriterSettings settings = new()
@@ -140,11 +141,17 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
                 Indent = true
             };
 
-            await Task.Run(() =>
+            // System.ServiceModel.Syndication.SyndicationFeed 还不支持异步读写
+            IHttpBodyControlFeature? syncIOFeature = HttpContext.Features.Get<IHttpBodyControlFeature>();
+            if (syncIOFeature != null)
             {
-                using XmlWriter xmlWriter = XmlWriter.Create(stream, settings);
-                feedFormatter.WriteTo(xmlWriter);
-            });
+                syncIOFeature.AllowSynchronousIO = true;
+            }
+
+            using XmlWriter xmlWriter = XmlWriter.Create(stream, settings);
+            feedFormatter.WriteTo(xmlWriter);
+
+            return Task.CompletedTask;
         }, contentType: "application/xml");
     }
 }

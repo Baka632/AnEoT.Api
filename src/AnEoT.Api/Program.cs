@@ -6,12 +6,6 @@ builder.Services.AddOpenApi()
     .AddMemoryCache()
     .AddControllers();
 
-builder.WebHost.ConfigureKestrel(options =>
-{
-    // System.ServiceModel.Syndication.SyndicationFeed 还不支持异步读写
-    options.AllowSynchronousIO = true;
-});
-
 WebApplication app = builder.Build();
 
 if (app.Environment.IsDevelopment())
