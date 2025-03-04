@@ -1,0 +1,7 @@
+@AnEoT.Search.Api_HostAddress = https://localhost:7243
+
+@keyword=维什戴尔
+GET {{AnEoT.Search.Api_HostAddress}}/search/windows/{{keyword}}
+Accept: application/xml
+
+###
