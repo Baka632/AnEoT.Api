@@ -1,5 +1,6 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
+using System.Xml.Linq;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -9,8 +10,12 @@ namespace AnEoT.Api.Search;
 
 [Route("search")]
 [ApiController]
-public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache cache) : ControllerBase
+public class SearchController(
+    IHttpClientFactory httpClientFactory,
+    IMemoryCache cache) : ControllerBase
 {
+    private const string AtomFeedUri = "https://aneot-vintage.arktca.com/atom_full.xml";
+
     [HttpGet("windows/{keyword}", Name = "Search for Windows")]
     public async Task<IResult> SearchForWindows(string keyword)
     {
@@ -20,15 +25,27 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
 
         if (!cache.TryGetValue(AtomCacheKey, out string? atomXml))
         {
-            HttpClient client = httpClientFactory.CreateClient();
-            atomXml = await client.GetStringAsync("https://aneot-vintage.arktca.com/atom_full.xml");
+            try
+            {
+                HttpClient client = httpClientFactory.CreateClient();
+                atomXml = await client.GetStringAsync(AtomFeedUri);
 
-            MemoryCacheEntryOptions cacheEntryOptions = new MemoryCacheEntryOptions()
-                .SetSlidingExpiration(TimeSpan.FromMinutes(30))
-                .SetAbsoluteExpiration(TimeSpan.FromHours(1));
-            // 30 分钟内没有访问则过期，1 小时后无论有人访问还是无人访问都过期
+                MemoryCacheEntryOptions cacheEntryOptions = new MemoryCacheEntryOptions()
+                    .SetSlidingExpiration(TimeSpan.FromMinutes(30))
+                    .SetAbsoluteExpiration(TimeSpan.FromHours(1));
+                // 30 分钟内没有访问则过期，1 小时后无论有人访问还是无人访问都过期
 
-            cache.Set(AtomCacheKey, atomXml, cacheEntryOptions);
+                cache.Set(AtomCacheKey, atomXml, cacheEntryOptions);
+            }
+            catch (HttpRequestException)
+            {
+                return TypedResults.Problem(new ProblemDetails()
+                {
+                    Status = StatusCodes.Status503ServiceUnavailable,
+                    Title = "无法获取 Atom Feed",
+                    Detail = $"无法访问：{AtomFeedUri}"
+                });
+            }
         }
 
         using StringReader stringReader = new(atomXml!);
@@ -45,6 +62,7 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
         result.Title = new TextSyndicationContent("回归线搜索");
         result.Id = "AnEoT-Search";
         result.Generator = "System.ServiceModel.Syndication.SyndicationFeed, used in AnEoT Search";
+        result.ElementExtensions.Add(new XElement("search-keyword", new XText(keyword)));
 
         List<SyndicationItem> items = new(feed.Items.Count());
 
@@ -87,7 +105,7 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
                     }
                     else
                     {
-                        newContent = content;
+                        newContent = $"{content[..endingSpaceLength]}......";
                     }
                 }
                 else
@@ -133,14 +151,15 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
 
         result.Items = items;
 
-        return TypedResults.Stream(stream =>
+        return TypedResults.Stream(async stream =>
         {
             Atom10FeedFormatter feedFormatter = new(result);
             XmlWriterSettings settings = new()
             {
                 NewLineHandling = NewLineHandling.Entitize,
                 NewLineOnAttributes = true,
-                Indent = true
+                Indent = true,
+                Async = true,
             };
 
             // System.ServiceModel.Syndication.SyndicationFeed 还不支持异步读写
@@ -151,9 +170,8 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
             }
 
             using XmlWriter xmlWriter = XmlWriter.Create(stream, settings);
+            await xmlWriter.WriteRawAsync($"""<?xml-stylesheet type="text/xsl" href="/windows-search.xsl"?>""");
             feedFormatter.WriteTo(xmlWriter);
-
-            return Task.CompletedTask;
         }, contentType: "application/xml");
     }
 }
