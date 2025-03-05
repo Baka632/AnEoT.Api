@@ -24,7 +24,9 @@ public class SearchController(IHttpClientFactory httpClientFactory, IMemoryCache
             atomXml = await client.GetStringAsync("https://aneot-vintage.arktca.com/atom_full.xml");
 
             MemoryCacheEntryOptions cacheEntryOptions = new MemoryCacheEntryOptions()
-                .SetSlidingExpiration(TimeSpan.FromHours(1));
+                .SetSlidingExpiration(TimeSpan.FromMinutes(30))
+                .SetAbsoluteExpiration(TimeSpan.FromHours(1));
+            // 30 分钟内没有访问则过期，1 小时后无论有人访问还是无人访问都过期
 
             cache.Set(AtomCacheKey, atomXml, cacheEntryOptions);
         }
